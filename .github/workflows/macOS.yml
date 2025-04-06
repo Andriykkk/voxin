@@ -22,7 +22,7 @@ jobs:
       
       - name: Cache Vulkan
         id: cache-vulkan-sdk
-        uses: actions/cache@v1
+        uses: actions/cache@v3
         with:
           path: ${{ env.INSTALL_LOCATION }}
           key: vulkan-sdk-${{ env.VK_VERSION }}
