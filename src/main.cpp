@@ -68,6 +68,9 @@ struct VulkanContext
     VkCommandBuffer commandBuffer;
     VkSemaphore imageAvailableSemaphore;
     VkSemaphore renderFinishedSemaphore;
+
+    VkBuffer vertexBuffer;
+    VkDeviceMemory vertexBufferMemory;
 };
 
 class Application
@@ -138,26 +141,43 @@ private:
             vkAcquireNextImageKHR(vulkan.device, vulkan.swapChain, UINT64_MAX,
                                   vulkan.imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
 
-            VkSubmitInfo submitInfo = {};
+            VkSubmitInfo submitInfo{};
             submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+            VkSemaphore waitSemaphores[] = {vulkan.imageAvailableSemaphore};
+            VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+            submitInfo.waitSemaphoreCount = 1;
+            submitInfo.pWaitSemaphores = waitSemaphores;
+            submitInfo.pWaitDstStageMask = waitStages;
             submitInfo.commandBufferCount = 1;
             submitInfo.pCommandBuffers = &vulkan.commandBuffer;
 
+            VkSemaphore signalSemaphores[] = {vulkan.renderFinishedSemaphore};
+            submitInfo.signalSemaphoreCount = 1;
+            submitInfo.pSignalSemaphores = signalSemaphores;
+
             vkQueueSubmit(vulkan.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
 
-            VkPresentInfoKHR presentInfo = {};
+            VkPresentInfoKHR presentInfo{};
             presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+            presentInfo.waitSemaphoreCount = 1;
+            presentInfo.pWaitSemaphores = signalSemaphores;
             presentInfo.swapchainCount = 1;
             presentInfo.pSwapchains = &vulkan.swapChain;
             presentInfo.pImageIndices = &imageIndex;
 
-            vkQueuePresentKHR(vulkan.graphicsQueue, &presentInfo);
+            vkQueuePresentKHR(vulkan.presentQueue, &presentInfo);
             vkDeviceWaitIdle(vulkan.device);
         }
     }
 
     void cleanup()
     {
+        vkDestroyPipeline(vulkan.device, graphicsPipeline, nullptr);
+        vkDestroyPipelineLayout(vulkan.device, pipelineLayout, nullptr);
+        vkDestroyShaderModule(vulkan.device, vertShaderModule, nullptr);
+        vkDestroyShaderModule(vulkan.device, fragShaderModule, nullptr);
+
         vkDestroySemaphore(vulkan.device, vulkan.renderFinishedSemaphore, nullptr);
         vkDestroySemaphore(vulkan.device, vulkan.imageAvailableSemaphore, nullptr);
         vkDestroyCommandPool(vulkan.device, vulkan.commandPool, nullptr);
@@ -203,8 +223,71 @@ private:
 
         VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-        vkDestroyShaderModule(vulkan.device, fragShaderModule, nullptr);
-        vkDestroyShaderModule(vulkan.device, vertShaderModule, nullptr);
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        vkCreatePipelineLayout(vulkan.device, &pipelineLayoutInfo, nullptr, &pipelineLayout);
+
+        // Missing: Vertex input state
+        VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+        vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+        // Missing: Input assembly
+        VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+        inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+        // Missing: Viewport and scissor
+        VkViewport viewport{};
+        viewport.width = vulkan.swapChainExtent.width;
+        viewport.height = vulkan.swapChainExtent.height;
+        viewport.maxDepth = 1.0f;
+
+        VkRect2D scissor{};
+        scissor.extent = vulkan.swapChainExtent;
+
+        VkPipelineViewportStateCreateInfo viewportState{};
+        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewportState.viewportCount = 1;
+        viewportState.pViewports = &viewport;
+        viewportState.scissorCount = 1;
+        viewportState.pScissors = &scissor;
+
+        // Missing: Rasterizer
+        VkPipelineRasterizationStateCreateInfo rasterizer{};
+        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterizer.lineWidth = 1.0f;
+
+        // Missing: Multisampling
+        VkPipelineMultisampleStateCreateInfo multisampling{};
+        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+        // Missing: Color blending
+        VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+        colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+        VkPipelineColorBlendStateCreateInfo colorBlending{};
+        colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        colorBlending.attachmentCount = 1;
+        colorBlending.pAttachments = &colorBlendAttachment;
+
+        // Create graphics pipeline
+        VkGraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipelineInfo.stageCount = 2;
+        pipelineInfo.pStages = shaderStages;
+        pipelineInfo.pVertexInputState = &vertexInputInfo;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &rasterizer;
+        pipelineInfo.pMultisampleState = &multisampling;
+        pipelineInfo.pColorBlendState = &colorBlending;
+        pipelineInfo.layout = pipelineLayout;
+        pipelineInfo.renderPass = vulkan.renderPass;
+        pipelineInfo.subpass = 0;
+
+        vkCreateGraphicsPipelines(vulkan.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline);
     }
 
     void createLogicalDevice()
@@ -377,6 +460,13 @@ private:
         renderPassInfo.pClearValues = &clearColor;
 
         vkCmdBeginRenderPass(vulkan.commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdEndRenderPass(vulkan.commandBuffer);
+
+        vkCmdBeginRenderPass(vulkan.commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        vkCmdBindPipeline(vulkan.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+        vkCmdDraw(vulkan.commandBuffer, 3, 1, 0, 0);
+
         vkCmdEndRenderPass(vulkan.commandBuffer);
 
         vkEndCommandBuffer(vulkan.commandBuffer);
